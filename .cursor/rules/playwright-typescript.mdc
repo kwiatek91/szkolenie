@@ -1,0 +1,155 @@
+---
+description: Playwright TypeScript test best practices
+globs: tests/**/*.ts,playwright.config.ts,pages/**/*.ts,services/**/*.ts
+alwaysApply: false
+---
+
+# Playwright TypeScript Best Practices
+
+## Project Layout
+
+```
+tests/          # Spec files — orchestrate flows, keep thin
+pages/          # Page Object classes — UI locators & actions
+services/       # API service classes — HTTP calls & data setup/teardown
+fixtures/       # Custom test fixtures (optional)
+```
+
+## Locators
+
+Prefer user-facing locators: `getByRole`, `getByLabel`, `getByPlaceholder`, `getByText`, `getByTestId`. Avoid CSS/XPath unless no semantic option exists.
+
+```typescript
+// ❌ BAD
+await page.locator('.btn-primary').click();
+
+// ✅ GOOD
+await page.getByRole('button', { name: 'Submit' }).click();
+```
+
+## Assertions
+
+Use web-first `expect` matchers — they auto-retry. Never assert on raw boolean checks.
+
+```typescript
+// ❌ BAD
+expect(await page.getByText('Welcome').isVisible()).toBe(true);
+
+// ✅ GOOD
+await expect(page.getByText('Welcome')).toBeVisible();
+```
+
+## Page Object Model
+
+One class per page or major UI section. Colocate locators and user actions; keep assertions in tests.
+
+```typescript
+// pages/login.page.ts
+import { type Locator, type Page } from '@playwright/test';
+
+export class LoginPage {
+  readonly emailInput: Locator;
+  readonly submitButton: Locator;
+
+  constructor(readonly page: Page) {
+    this.emailInput = page.getByLabel('Email');
+    this.submitButton = page.getByRole('button', { name: 'Sign in' });
+  }
+
+  async goto() {
+    await this.page.goto('/login');
+  }
+
+  async signIn(email: string, password: string) {
+    await this.emailInput.fill(email);
+    await this.page.getByLabel('Password').fill(password);
+    await this.submitButton.click();
+  }
+}
+```
+
+POM rules:
+- Expose `readonly` locators; define them in the constructor.
+- Methods represent user actions (`signIn`, `addToCart`), not test steps.
+- Return `this` or a related page object for fluent navigation when useful.
+- Do not import `test` or `expect` inside page objects (except rare internal waits).
+- Instantiate directly in tests — no fixture wrapper needed for simple `new LoginPage(page)`.
+
+```typescript
+test('user can sign in', async ({ page }) => {
+  const loginPage = new LoginPage(page);
+  await loginPage.goto();
+  await loginPage.signIn('user@test.com', 'secret');
+});
+```
+
+## API Services
+
+When tests need API setup, teardown, or verification, wrap `APIRequestContext` in a service class — never scatter raw HTTP calls in specs.
+
+```typescript
+// services/users.service.ts
+import { type APIRequestContext } from '@playwright/test';
+
+export class UsersService {
+  constructor(private readonly request: APIRequestContext) {}
+
+  async createUser(data: { email: string; name: string }) {
+    const response = await this.request.post('/api/users', { data });
+    await response.ok(); // throws on failure
+    return response.json();
+  }
+
+  async deleteUser(id: string) {
+    await this.request.delete(`/api/users/${id}`);
+  }
+
+  async getUser(id: string) {
+    const response = await this.request.get(`/api/users/${id}`);
+    await response.ok();
+    return response.json();
+  }
+}
+```
+
+Service rules:
+- One service per API domain (`UsersService`, `OrdersService`).
+- Use `request.post/get/patch/delete` with typed request/response shapes.
+- Call `await response.ok()` or assert status explicitly — do not ignore failures.
+- Set `baseURL` and auth headers in `playwright.config.ts` under `use.extraHTTPHeaders` — Playwright's built-in `request` fixture picks them up automatically.
+- Use services for preconditions (seed data) and postconditions (verify server state); keep UI assertions in tests.
+- Instantiate services directly — Playwright already injects `request`; wrapping it in a custom fixture is redundant unless you need shared setup/teardown.
+
+```typescript
+test('created user appears in admin list', async ({ page, request }) => {
+  const usersService = new UsersService(request);
+  const adminUsersPage = new AdminUsersPage(page);
+
+  const user = await usersService.createUser({ email: 'a@test.com', name: 'Alice' });
+  await adminUsersPage.goto();
+  await expect(adminUsersPage.rowFor(user.email)).toBeVisible();
+});
+```
+
+### When custom fixtures ARE worth it
+
+Skip fixtures for thin `new Service(request)` wrappers. Add them only when they do real work:
+
+- **Auth setup** — create a browser context with `storageState` before each test
+- **Lifecycle** — `beforeAll`/`afterAll` for a shared API context that must be disposed
+- **Composition** — many test files import one extended `test` with 5+ shared dependencies
+- **Config overrides** — different fixture values per Playwright project (admin vs user role)
+
+## Test Structure
+
+- One behavior per test; descriptive names.
+- Specs orchestrate page objects and services — no duplicated selectors or HTTP paths.
+- Keep tests independent; clean up created data in `test.afterEach` via services.
+- Always `await` Playwright API calls.
+
+## Stability & Config
+
+- No arbitrary `waitForTimeout` — rely on auto-waiting and web-first assertions.
+- Use `test.step()` for multi-step flows.
+- Set `baseURL` in `playwright.config.ts`; use relative paths in POMs and services.
+- Type config with `defineConfig`; read secrets from env, never hardcode.
