@@ -1,0 +1,31 @@
+---
+description: Require passing tests and formatted code before finishing work
+alwaysApply: true
+---
+
+# Quality Gates
+
+Before considering any coding task complete, verify formatting and tests.
+
+## Formatting
+
+- Run `npm run format` after editing source or test files so Prettier applies project style.
+- If you only need to verify without writing, use `npm run format:check` — it must exit 0.
+- Do not leave unformatted changes; fix formatting issues before finishing.
+
+## Tests
+
+- Run `npm test` after changes that affect behavior, tests, config, or dependencies.
+- All Playwright tests must pass (exit code 0).
+- If tests fail, fix the root cause and re-run until green — do not mark the task done with failing tests.
+- When adding or changing tests, follow `.cursor/rules/playwright-typescript.mdc`.
+
+## When to run
+
+| Change type | Format | Tests |
+|-------------|--------|-------|
+| Specs, pages, services, `playwright.config.ts` | Yes | Yes |
+| ESLint/Prettier config only | Optional | No |
+| Docs or comments only | No | No |
+
+Run commands from the repository root.
